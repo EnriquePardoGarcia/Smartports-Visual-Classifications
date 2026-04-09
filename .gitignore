@@ -30,7 +30,6 @@ ENV/
 .idea/
 
 # ML specific
-runs/
 *.pt
 *.pth
 *.weights
