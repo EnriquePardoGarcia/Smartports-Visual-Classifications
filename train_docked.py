@@ -46,26 +46,66 @@ CONFIGS = [
 
 
 def find_best_ship_model():
+    """Selects the best ship model by:
+      1. Finding the config with the highest mean AUC (from summary.json).
+      2. Within that config, picking the run with the highest peak val_auc
+         (from run{n}_history.json).
+    """
     if not os.path.isdir(SHIP_RUNS_DIR):
         return None
     ship_runs = sorted([
         d for d in os.listdir(SHIP_RUNS_DIR)
         if d.startswith("ship_") and os.path.isdir(os.path.join(SHIP_RUNS_DIR, d))
     ])
-    for run_folder in reversed(ship_runs):
-        run_path = os.path.join(SHIP_RUNS_DIR, run_folder)
-        for group_candidate in ["pretrained_aug", "pretrained_noaug"]:
-            group_path = os.path.join(run_path, group_candidate)
-            if not os.path.isdir(group_path):
+    if not ship_runs:
+        return None
+
+    run_path = os.path.join(SHIP_RUNS_DIR, ship_runs[-1])  # most recent run
+
+    best_mean_auc  = -1.0
+    best_combo_dir = None
+
+    for group in ["pretrained_aug", "pretrained_noaug"]:
+        group_path = os.path.join(run_path, group)
+        if not os.path.isdir(group_path):
+            continue
+        for combo in sorted(os.listdir(group_path)):
+            summary_path = os.path.join(group_path, combo, "results", "summary.json")
+            if not os.path.isfile(summary_path):
                 continue
-            for combo_folder in sorted(os.listdir(group_path)):
-                models_dir = os.path.join(group_path, combo_folder, "models")
-                if not os.path.isdir(models_dir):
-                    continue
-                candidates = [f for f in os.listdir(models_dir) if f.endswith("_best.pt")]
-                if candidates:
-                    return os.path.join(models_dir, sorted(candidates)[0])
-    return None
+            with open(summary_path) as f:
+                summary = json.load(f)
+            mean_auc = summary.get("auc", {}).get("mean", -1.0)
+            if mean_auc > best_mean_auc:
+                best_mean_auc  = mean_auc
+                best_combo_dir = os.path.join(group_path, combo)
+
+    if best_combo_dir is None:
+        return None
+
+    # Within the best config, pick the run with the highest peak val_auc
+    results_dir = os.path.join(best_combo_dir, "results")
+    models_dir  = os.path.join(best_combo_dir, "models")
+    best_run_auc = -1.0
+    best_run_idx = 1
+
+    for history_file in sorted(os.listdir(results_dir)):
+        if not history_file.startswith("run") or not history_file.endswith("_history.json"):
+            continue
+        run_idx = int(history_file[3])  # "run1_history.json" → 1
+        with open(os.path.join(results_dir, history_file)) as f:
+            history = json.load(f)
+        peak_auc = max(epoch["val_auc"] for epoch in history)
+        if peak_auc > best_run_auc:
+            best_run_auc = peak_auc
+            best_run_idx = run_idx
+
+    candidates = [f for f in os.listdir(models_dir)
+                  if f.endswith("_best.pt") and f"run{best_run_idx}_" in f]
+    if not candidates:
+        candidates = sorted(f for f in os.listdir(models_dir) if f.endswith("_best.pt"))
+
+    return os.path.join(models_dir, candidates[0]) if candidates else None
 
 
 def load_ship_weights(model, ship_path, device):

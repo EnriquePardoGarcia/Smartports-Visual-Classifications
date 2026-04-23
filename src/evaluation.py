@@ -272,9 +272,75 @@ def plot_configs_comparison(all_results, results_dir, task_name):
     print(f"  Comparison plot saved: {path}")
 
 
+def plot_correct_and_errors(model, loader, config_name, results_dir, class_names, device):
+    """Generates a single figure with two sections: correct and wrong predictions."""
+    model.eval()
+    correct, errors = [], []
+
+    with torch.no_grad():
+        for images, labels in loader:
+            outputs = model(images.to(device))
+            probs   = torch.sigmoid(outputs).cpu().numpy().flatten()
+            preds   = (probs >= 0.5).astype(int)
+            for i in range(len(images)):
+                gt, pred, prob = int(labels[i]), int(preds[i]), float(probs[i])
+                entry = (_denormalize(images[i]).permute(1, 2, 0).numpy(), gt, pred, prob)
+                if gt == pred:
+                    correct.append(entry)
+                else:
+                    errors.append(entry)
+
+    n_correct = len(correct)
+    n_errors  = len(errors)
+    n_total   = n_correct + n_errors
+
+    if n_total == 0:
+        return
+
+    cols = max(max(n_correct, n_errors, 1), 4)
+    rows = 2  # row 0 = correct, row 1 = errors
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3.5))
+    if rows == 1:
+        axes = [axes]
+
+    # Section headers via row titles
+    section_labels = [
+        f"CORRECTAS ({n_correct})",
+        f"FALLIDAS ({n_errors})",
+    ]
+    section_colors = ["green", "red"]
+    sections       = [correct, errors]
+
+    for row, (section, title, color) in enumerate(zip(sections, section_labels, section_colors)):
+        for col in range(cols):
+            ax = axes[row][col]
+            ax.axis("off")
+            if col == 0:
+                ax.set_ylabel(title, fontsize=11, fontweight="bold",
+                              color=color, rotation=90, labelpad=10)
+            if col < len(section):
+                img, gt, pred, prob = section[col]
+                ax.imshow(img)
+                ax.set_title(
+                    f"Real: {class_names[gt]}\nPred: {class_names[pred]} ({prob:.2f})",
+                    fontsize=8, color=color
+                )
+                for spine in ax.spines.values():
+                    spine.set_visible(True)
+                    spine.set_edgecolor(color)
+                    spine.set_linewidth(3)
+
+    fig.suptitle(f"{config_name} — resultados ({n_correct}/{n_total} correctas)", fontsize=11)
+    plt.tight_layout()
+    path = os.path.join(results_dir, f"{config_name}_correct_vs_errors.png")
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  Correct vs errors saved: {path}")
+
+
 def full_visual_evaluation(model, loader, config_name, results_dir, class_names, device,
                             labels, preds, probs):
-    plot_predictions_grid(model, loader, config_name, results_dir, class_names, device, n=16)
+    plot_correct_and_errors(model, loader, config_name, results_dir, class_names, device)
     plot_errors(model, loader, config_name, results_dir, class_names, device, n=16)
     plot_roc_curve(labels, probs, config_name, results_dir)
     plot_confusion_matrix(labels, preds, config_name, results_dir, class_names)
